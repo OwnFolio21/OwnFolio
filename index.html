@@ -622,60 +622,84 @@ function NavBtn({ label, active, onClick }) {
   );
 }
 
-function ValuationChart({ entries }) {
+function ValuationChart({ entries, onClick }) {
   const points = [...entries]
-    .filter(e => e.type === "valuation" &&
-      e.valuation !== "" && e.valuation != null &&
-      Number.isFinite(Number(e.valuation)) && Number(e.valuation) >= 0)
+    .filter(e => e.type === "valuation" && e.valuation !== "" &&
+      e.valuation != null && Number.isFinite(Number(e.valuation)) && Number(e.valuation) >= 0)
     .sort((a, b) => a.date.localeCompare(b.date));
-
-  if (points.length < 2) {
-    return (
-      <div style={{
-        color: C.sub, fontSize: "12px",
-        padding: "20px 4px", textAlign: "center"
-      }}>
-        Record at least two valuations to see historical portfolio value.
-      </div>
-    );
-  }
-
   const values = points.map(p => Number(p.valuation));
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const min = values.length ? Math.min(...values) : 0;
+  const max = values.length ? Math.max(...values) : 0;
   const range = max - min || 1;
   const w = 300, h = 80, pad = 5;
   const coords = values.map((v, i) => ({
-    x: pad + (i / (values.length - 1)) * (w - 2 * pad),
+    x: pad + (values.length < 2 ? (w / 2) : (i / (values.length - 1)) * (w - 2 * pad)),
     y: h - pad - ((v - min) / range) * (h - 2 * pad)
   }));
-
   return (
-    <div>
-      <svg viewBox={`0 0 ${w} ${h}`} width="100%" height="80"
-        role="img" aria-label="Historical portfolio valuation">
-        <polyline
-          points={coords.map(p => `${p.x},${p.y}`).join(" ")}
-          fill="none" stroke={C.gold} strokeWidth="2.5"
-          strokeLinecap="round" strokeLinejoin="round"
-        />
-        {coords.map((p, i) => (
-          <circle key={points[i].id || i} cx={p.x} cy={p.y}
-            r="3" fill={C.gold} />
-        ))}
-      </svg>
-      <div style={{
-        display: "flex", justifyContent: "space-between",
-        color: C.sub, fontSize: "10px"
-      }}>
-        <span>{fmtDate(points[0].date)}</span>
-        <span>{fmtDate(points[points.length - 1].date)}</span>
+    <button type="button" onClick={onClick} style={{
+      display: "block", width: "100%", textAlign: "left", background: "transparent",
+      border: "none", padding: 0, color: C.text, cursor: "pointer"
+    }} aria-label="Open valuation history">
+      {points.length >= 2 ? (
+        <>
+          <svg viewBox={`0 0 ${w} ${h}`} width="100%" height="80" role="img" aria-label="Historical portfolio valuation chart">
+            <polyline points={coords.map(p => `${p.x},${p.y}`).join(" ")} fill="none" stroke={C.gold} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            {coords.map((p, i) => <circle key={points[i].id || i} cx={p.x} cy={p.y} r="3" fill={C.gold} />)}
+          </svg>
+          <div style={{ display: "flex", justifyContent: "space-between", color: C.sub, fontSize: "10px" }}>
+            <span>{fmtDate(points[0].date)}</span><span>{fmtDate(points[points.length - 1].date)}</span>
+          </div>
+        </>
+      ) : (
+        <div style={{ color: C.sub, fontSize: "12px", padding: "20px 4px", textAlign: "center" }}>
+          {points.length === 1 ? "1 valuation recorded · Tap to view history" : "No valuations recorded · Tap to view history"}
+        </div>
+      )}
+      <div style={{ color: C.gold, fontSize: "11px", textAlign: "right", marginTop: "8px" }}>Tap to view valuation history →</div>
+    </button>
+  );
+}
+
+function ValuationHistoryModal({ entries, onClose }) {
+  const points = [...entries]
+    .filter(e => e.type === "valuation" && e.valuation !== "" && e.valuation != null &&
+      Number.isFinite(Number(e.valuation)) && Number(e.valuation) >= 0)
+    .sort((a, b) => b.date.localeCompare(a.date) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", background: "#000000bb" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: C.card, border: `1px solid ${C.divider}`, borderRadius: "18px", width: "100%", maxWidth: "460px", maxHeight: "80vh", overflowY: "auto", padding: "18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+          <div>
+            <div style={{ fontFamily: "'Sora',sans-serif", fontSize: "20px", fontWeight: 800 }}>Valuation History</div>
+            <div style={{ color: C.sub, fontSize: "12px", marginTop: "4px" }}>{points.length} recorded valuation{points.length === 1 ? "" : "s"}</div>
+          </div>
+          <button onClick={onClose} aria-label="Close valuation history" style={{ background: C.cardAlt, border: "none", color: C.text, borderRadius: "8px", fontSize: "22px", width: "36px", height: "36px" }}>×</button>
+        </div>
+        {points.length === 0 ? (
+          <div style={{ color: C.sub, textAlign: "center", padding: "28px 8px" }}>No valuation records yet. Add one from Settings → Update Current Valuation.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {points.map((p, i) => (
+              <div key={p.id || `${p.date}-${i}`} style={{ background: C.cardAlt, borderRadius: "12px", padding: "14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
+                <div>
+                  <div style={{ color: C.sub, fontSize: "11px", marginBottom: "5px" }}>{i === 0 ? "LATEST VALUATION" : "PREVIOUS VALUATION"}</div>
+                  <div style={{ color: C.text, fontSize: "13px", fontWeight: 600 }}>{fmtDate(p.date)}</div>
+                </div>
+                <div style={{ color: C.gold, fontFamily: "'Sora',sans-serif", fontWeight: 700, fontSize: "15px", textAlign: "right" }}>{fmtINR(Number(p.valuation))}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={onClose} style={{ ...primaryButton, marginTop: "16px" }}>Close</button>
       </div>
     </div>
   );
 }
 
 function Dashboard({ metrics, hurdleRate }) {
+  const [showValuationHistory, setShowValuationHistory] = useState(false);
+
   return (
     <div style={{ padding: "32px 20px 0" }}>
       <div style={{
@@ -700,7 +724,10 @@ function Dashboard({ metrics, hurdleRate }) {
         background: C.card, borderRadius: "16px",
         padding: "12px", marginBottom: "24px"
       }}>
-        <ValuationChart entries={metrics.historicalValuations} />
+        <ValuationChart
+          entries={metrics.historicalValuations}
+          onClick={() => setShowValuationHistory(true)}
+        />
       </div>
 
       <div style={{
@@ -737,6 +764,13 @@ function Dashboard({ metrics, hurdleRate }) {
         <DetailRow label="Total Investments" value={fmtINR(metrics.totalInvestments)} />
         <DetailRow label="Total Divestments" value={fmtINR(metrics.totalDivestments)} last />
       </div>
+
+      {showValuationHistory && (
+        <ValuationHistoryModal
+          entries={metrics.historicalValuations}
+          onClose={() => setShowValuationHistory(false)}
+        />
+      )}
     </div>
   );
 }
