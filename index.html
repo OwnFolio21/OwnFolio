@@ -299,10 +299,11 @@ function computeEngine(entries, hurdleRate) {
 
   // Change #4: historical chart uses actual valuation entries only.
   const historicalValuations = valuations.map(e => ({
-    id: e.id,
-    date: e.date,
-    valuation: Number(e.valuation)
-  }));
+  id: e.id,
+  type: "valuation",
+  date: e.date,
+  valuation: Number(e.valuation)
+}));
 
   const processed = sorted.map(e => ({
     ...e,
