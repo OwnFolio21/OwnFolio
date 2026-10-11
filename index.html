@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>IRR Investment Tracker</title>
+<title>OwnFolio — Investment Tracker</title>
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23101826'/%3E%3Ctext x='50' y='62' font-size='42' text-anchor='middle' fill='%23E3A857' font-family='sans-serif' font-weight='bold'%3E%25%3C/text%3E%3C/svg%3E" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -11,9 +11,33 @@
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap');
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-body { margin: 0; background: #101826; font-family: 'Inter', sans-serif; }
-input[type=date]::-webkit-calendar-picker-indicator { filter: invert(1); }
+body { margin: 0; background: var(--app-bg, #101826); font-family: 'Inter', sans-serif; }
+input[type=date]::-webkit-calendar-picker-indicator { filter: var(--date-icon-filter, invert(1)); }
 button, input, select { font-family: inherit; }
+html, body, #root { min-height: 100%; }
+button, input, select { max-width: 100%; }
+.app-shell { width: 100%; max-width: 1440px; margin: 0 auto; position: relative; min-height: 100vh; }
+.app-content { padding-bottom: 96px; }
+.bottom-nav { max-width: 1440px !important; }
+.dashboard-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.dashboard-top-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+.dashboard-lower-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+@media (min-width: 760px) {
+  .app-content { padding-left: 22px; padding-right: 22px; }
+  .dashboard-top-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .dashboard-lower-grid { grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); align-items: start; }
+  .bottom-nav { left: 50% !important; transform: translateX(-50%); border-radius: 14px 14px 0 0; }
+}
+@media (min-width: 1100px) {
+  .dashboard-layout { grid-template-columns: minmax(0, 1.75fr) minmax(320px, 1fr); align-items: start; }
+  .dashboard-primary, .dashboard-secondary { min-width: 0; }
+}
+@media (max-width: 420px) {
+  .dashboard-top-metrics { gap: 8px; }
+  .dashboard-card { padding: 12px !important; }
+  .valuation-form-grid { grid-template-columns: minmax(0, 1fr) minmax(105px, .75fr) !important; }
+}
+
 </style>
 </head>
 <body>
@@ -77,12 +101,12 @@ const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
 
-const C = {
-  bg: "#101826", card: "#182236", cardAlt: "#1F2A40",
-  raised: "#243250", text: "#F4F6FA", sub: "#8B96AC",
-  faint: "#5D677E", gold: "#E3A857", pos: "#3FBF7F",
-  neg: "#E2604F", divider: "#26314A"
+const THEME_PALETTES = {
+  dark: { bg: "#101826", card: "#182236", cardAlt: "#1F2A40", raised: "#243250", text: "#F4F6FA", sub: "#8B96AC", faint: "#5D677E", gold: "#E3A857", pos: "#3FBF7F", neg: "#E2604F", divider: "#26314A" },
+  light: { bg: "#F2F6FC", card: "#FFFFFF", cardAlt: "#EAF1FB", raised: "#DCE8F8", text: "#14233D", sub: "#526783", faint: "#6D7F98", gold: "#2563EB", pos: "#059669", neg: "#DC4545", divider: "#D9E4F2" }
 };
+let activeTheme = (() => { try { return localStorage.getItem("ownfolio-theme") === "light" ? "light" : "dark"; } catch (_) { return "dark"; } })();
+const C = new Proxy({}, { get: (_, key) => THEME_PALETTES[activeTheme][key] || THEME_PALETTES.dark[key] });
 
 const TYPES = {
   investment: { label: "Investment", sign: -1, color: C.neg },
@@ -299,11 +323,16 @@ function computeEngine(entries, hurdleRate) {
 
   // Change #4: historical chart uses actual valuation entries only.
   const historicalValuations = valuations.map(e => ({
-  id: e.id,
-  type: "valuation",
-  date: e.date,
-  valuation: Number(e.valuation)
-}));
+    id: e.id,
+    type: "valuation",
+    date: e.date,
+    valuation: Number(e.valuation),
+    breakdown: Array.isArray(e.breakdown) ? e.breakdown : null,
+    createdAt: e.createdAt
+  }));
+  const latestBreakdown = latestValuation && Array.isArray(latestValuation.breakdown)
+    ? latestValuation.breakdown.filter(x => x && typeof x.name === "string" && Number.isFinite(Number(x.amount)) && Number(x.amount) >= 0)
+    : [];
 
   const processed = sorted.map(e => ({
     ...e,
@@ -313,7 +342,7 @@ function computeEngine(entries, hurdleRate) {
 
   return {
     processed, cfRows, currentValuation, valuationDate, irrEndDate,
-    historicalValuations, totalInvestments, totalDivestments,
+    historicalValuations, latestBreakdown, totalInvestments, totalDivestments,
     totalDividends, netCapitalInvested, actualGain, absoluteReturn,
     hurdleReturn, hurdleValue, aboveHurdle, irr
   };
@@ -354,7 +383,7 @@ function AuthScreen() {
         <div style={{
           fontFamily: "'Sora',sans-serif", color: C.text,
           fontSize: "26px", fontWeight: 800
-        }}>IRR Tracker</div>
+        }}>OwnFolio</div>
 
         <div style={{ color: C.sub, fontSize: "13px", margin: "6px 0 28px" }}>
           {mode === "login" ? "Log in to your ledger" :
@@ -405,22 +434,25 @@ function AuthScreen() {
   );
 }
 
-const inputStyle = {
+const dynamicStyle = factory => new Proxy({}, {
+  ownKeys: () => Reflect.ownKeys(factory()),
+  getOwnPropertyDescriptor: (_, key) => ({ enumerable: true, configurable: true, value: factory()[key] }),
+  get: (_, key) => factory()[key]
+});
+const inputStyle = dynamicStyle(() => ({
   background: C.card, color: C.text, border: `1px solid ${C.divider}`,
   borderRadius: "10px", padding: "12px", width: "100%",
   fontSize: "15px", marginBottom: "10px"
-};
-
-const primaryButton = {
-  background: C.gold, color: C.bg, border: "none",
+}));
+const primaryButton = dynamicStyle(() => ({
+  background: C.gold, color: activeTheme === "light" ? "#FFFFFF" : C.bg, border: "none",
   borderRadius: "10px", padding: "13px", width: "100%",
-  fontWeight: 700, fontSize: "15px", marginTop: "8px"
-};
-
-const textButton = {
+  fontWeight: 700, fontSize: "15px", marginTop: "8px", cursor: "pointer"
+}));
+const textButton = dynamicStyle(() => ({
   background: "none", border: "none", color: C.sub,
   fontSize: "13px", marginTop: "14px", width: "100%", padding: "8px"
-};
+}));
 
 function MainApp({ user }) {
   const [entries, setEntries] = useState([]);
@@ -429,6 +461,19 @@ function MainApp({ user }) {
   const [modal, setModal] = useState(null);
   const [filterType, setFilterType] = useState("all");
   const [sortDesc, setSortDesc] = useState(true);
+  const [theme, setTheme] = useState(activeTheme);
+  const changeTheme = nextTheme => {
+    const next = nextTheme === "light" ? "light" : "dark";
+    activeTheme = next;
+    setTheme(next);
+    try { localStorage.setItem("ownfolio-theme", next); } catch (_) {}
+    document.documentElement.style.setProperty("--app-bg", THEME_PALETTES[next].bg);
+    document.documentElement.style.setProperty("--date-icon-filter", next === "dark" ? "invert(1)" : "none");
+  };
+  useEffect(() => {
+    document.documentElement.style.setProperty("--app-bg", THEME_PALETTES[theme].bg);
+    document.documentElement.style.setProperty("--date-icon-filter", theme === "dark" ? "invert(1)" : "none");
+  }, [theme]);
 
   useEffect(() => {
     const entriesCol = collection(db, "users", user.uid, "entries");
@@ -459,12 +504,24 @@ function MainApp({ user }) {
       }
 
       if (entry.type === "valuation") {
-        const v = Number(entry.valuation);
-        if (entry.valuation === "" || entry.valuation == null ||
-            !Number.isFinite(v) || v < 0) {
+        let v = Number(entry.valuation);
+        let breakdown = entry.breakdown;
+        if (Array.isArray(breakdown)) {
+          breakdown = breakdown.map((item, index) => {
+            const name = index === 0 ? "Cash" : String(item.name || "").trim();
+            const amount = Number(item.amount);
+            if (!name) throw new Error("Enter a company name for every company row.");
+            if (item.amount === "" || item.amount == null || !Number.isFinite(amount) || amount < 0) {
+              throw new Error("Enter a valid amount (zero or more) for Cash and every company.");
+            }
+            return { name, amount };
+          });
+          v = breakdown.reduce((sum, item) => sum + item.amount, 0);
+        }
+        if (entry.valuation === "" || entry.valuation == null || !Number.isFinite(v) || v < 0) {
           throw new Error("Enter a valid valuation of zero or more.");
         }
-        entry = { ...entry, valuation: v, amount: 0 };
+        entry = { ...entry, valuation: v, amount: 0, ...(Array.isArray(breakdown) ? { breakdown } : {}) };
       } else {
         const amount = Number(entry.amount);
         if (entry.amount === "" || entry.amount == null ||
@@ -540,11 +597,8 @@ function MainApp({ user }) {
       background: C.bg, minHeight: "100vh",
       fontFamily: "'Inter',sans-serif", color: C.text
     }}>
-      <div style={{
-        maxWidth: "480px", margin: "0 auto",
-        position: "relative", minHeight: "100vh"
-      }}>
-        <div style={{ paddingBottom: "88px" }}>
+      <div className="app-shell">
+        <div className="app-content">
           {view === "dashboard" && <Dashboard metrics={metrics} hurdleRate={hurdleRate} />}
 
           {view === "history" && (
@@ -563,15 +617,16 @@ function MainApp({ user }) {
             <SettingsView
               hurdleRate={hurdleRate}
               setHurdleRate={persistHurdle}
-              onUpdateValuation={(valuation, date) =>
-                saveEntry({
-                  type: "valuation", amount: 0, valuation, date
-                })
+              onUpdateValuation={(valuation, date, breakdown) =>
+                saveEntry({ type: "valuation", amount: 0, valuation, date, breakdown })
               }
               onReset={resetAll}
               currentValuation={metrics.currentValuation}
               valuationDate={metrics.valuationDate}
               userEmail={user.email}
+              theme={theme}
+              onThemeChange={changeTheme}
+              latestBreakdown={metrics.latestBreakdown}
             />
           )}
         </div>
@@ -589,8 +644,8 @@ function MainApp({ user }) {
         <div style={{
           background: C.card, borderTop: `1px solid ${C.divider}`,
           position: "fixed", bottom: 0, left: 0, right: 0,
-          maxWidth: "480px", margin: "0 auto", display: "flex", zIndex: 9
-        }}>
+          maxWidth: "1440px", margin: "0 auto", display: "flex", zIndex: 9
+        }} className="bottom-nav">
           <NavBtn label="Dashboard" active={view === "dashboard"} onClick={() => setView("dashboard")} />
           <NavBtn label="History" active={view === "history"} onClick={() => setView("history")} />
           <NavBtn label="Settings" active={view === "settings"} onClick={() => setView("settings")} />
@@ -668,7 +723,7 @@ function ValuationHistoryModal({ entries, onClose }) {
     .sort((a, b) => b.date.localeCompare(a.date) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", background: "#000000bb" }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: C.card, border: `1px solid ${C.divider}`, borderRadius: "18px", width: "100%", maxWidth: "460px", maxHeight: "80vh", overflowY: "auto", padding: "18px" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: C.card, border: `1px solid ${C.divider}`, borderRadius: "18px", width: "100%", maxWidth: "720px", maxHeight: "85vh", overflowY: "auto", padding: "18px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
           <div>
             <div style={{ fontFamily: "'Sora',sans-serif", fontSize: "20px", fontWeight: 800 }}>Valuation History</div>
@@ -677,7 +732,7 @@ function ValuationHistoryModal({ entries, onClose }) {
           <button onClick={onClose} aria-label="Close valuation history" style={{ background: C.cardAlt, border: "none", color: C.text, borderRadius: "8px", fontSize: "22px", width: "36px", height: "36px" }}>×</button>
         </div>
         {points.length === 0 ? (
-          <div style={{ color: C.sub, textAlign: "center", padding: "28px 8px" }}>No valuation records yet. Add one from Settings → Update Current Valuation.</div>
+          <div style={{ color: C.sub, textAlign: "center", padding: "28px 8px" }}>No valuation records yet. Add one from Settings → Add Valuation.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {points.map((p, i) => (
@@ -687,6 +742,11 @@ function ValuationHistoryModal({ entries, onClose }) {
                   <div style={{ color: C.text, fontSize: "13px", fontWeight: 600 }}>{fmtDate(p.date)}</div>
                 </div>
                 <div style={{ color: C.gold, fontFamily: "'Sora',sans-serif", fontWeight: 700, fontSize: "15px", textAlign: "right" }}>{fmtINR(Number(p.valuation))}</div>
+                {Array.isArray(p.breakdown) && p.breakdown.length > 0 && (
+                  <div style={{ width: "100%", marginTop: "10px", display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                    {p.breakdown.map((item, j) => <span key={`${item.name}-${j}`} style={{ background: C.raised, color: C.sub, padding: "4px 7px", borderRadius: "7px", fontSize: "11px" }}>{item.name}: {fmtINR(item.amount)}</span>)}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -701,7 +761,7 @@ function Dashboard({ metrics, hurdleRate }) {
   const [showValuationHistory, setShowValuationHistory] = useState(false);
 
   return (
-    <div style={{ padding: "32px 20px 0" }}>
+    <div style={{ padding: "28px 20px 24px" }}>
       <div style={{
         color: C.sub, letterSpacing: "0.08em", fontSize: "12px",
         fontWeight: 600, textTransform: "uppercase", marginBottom: "4px"
@@ -722,7 +782,7 @@ function Dashboard({ metrics, hurdleRate }) {
 
       <div style={{
         background: C.card, borderRadius: "16px",
-        padding: "12px", marginBottom: "24px"
+        padding: "12px", marginBottom: "20px", border: `1px solid ${C.divider}`
       }}>
         <ValuationChart
           entries={metrics.historicalValuations}
@@ -730,10 +790,7 @@ function Dashboard({ metrics, hurdleRate }) {
         />
       </div>
 
-      <div style={{
-        display: "grid", gridTemplateColumns: "1fr 1fr",
-        gap: "12px", marginBottom: "24px"
-      }}>
+      <div className="dashboard-top-metrics">
         <HeroCard label="XIRR" value={fmtPct(metrics.irr)} accent={C.gold} />
         <HeroCard label="Absolute Return" value={fmtPct(metrics.absoluteReturn)}
           accent={metrics.absoluteReturn == null ? C.sub :
@@ -758,11 +815,29 @@ function Dashboard({ metrics, hurdleRate }) {
       </div>
 
       <div style={{
-        background: C.card, borderRadius: "16px",
-        overflow: "hidden", marginBottom: "24px"
+        background: C.card, borderRadius: "16px", overflow: "hidden", marginBottom: "20px", border: `1px solid ${C.divider}`
       }}>
         <DetailRow label="Total Investments" value={fmtINR(metrics.totalInvestments)} />
         <DetailRow label="Total Divestments" value={fmtINR(metrics.totalDivestments)} last />
+      </div>
+
+      <div style={{ background: C.card, borderRadius: "16px", padding: "16px", marginBottom: "20px", border: `1px solid ${C.divider}` }}>
+        <div style={{ fontWeight: 800, marginBottom: "12px", fontFamily: "'Sora',sans-serif" }}>Asset Allocation</div>
+        {metrics.latestBreakdown && metrics.latestBreakdown.length ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ display: "flex", height: "12px", borderRadius: "99px", overflow: "hidden", background: C.cardAlt }}>
+              {metrics.latestBreakdown.map((item, i) => <div key={`${item.name}-${i}`} title={item.name} style={{ width: `${metrics.currentValuation > 0 ? (Number(item.amount) / metrics.currentValuation) * 100 : 0}%`, background: [C.gold, "#4F8EF7", "#28B7A5", "#9B7AE8", "#F59E0B", "#EC4899", "#60A5FA"][i % 7] }} />)}
+            </div>
+            {metrics.latestBreakdown.map((item, i) => (
+              <div key={`${item.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ width: "10px", height: "10px", borderRadius: "3px", background: [C.gold, "#4F8EF7", "#28B7A5", "#9B7AE8", "#F59E0B", "#EC4899", "#60A5FA"][i % 7], flexShrink: 0 }} />
+                <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere", color: C.sub, fontSize: "13px" }}>{item.name}</span>
+                <span style={{ fontWeight: 700, fontSize: "13px" }}>{fmtINR(item.amount)}</span>
+                <span style={{ color: C.sub, width: "48px", textAlign: "right", fontSize: "12px" }}>{metrics.currentValuation > 0 ? `${(Number(item.amount) / metrics.currentValuation * 100).toFixed(1)}%` : "0.0%"}</span>
+              </div>
+            ))}
+          </div>
+        ) : <div style={{ color: C.sub, fontSize: "13px", lineHeight: 1.6 }}>Asset allocation will appear after you save a valuation with Cash and company-level amounts. Older total-only valuations remain available in history.</div>}
       </div>
 
       {showValuationHistory && (
@@ -896,7 +971,7 @@ function HistoryView({
 }
 function SettingsView({
   hurdleRate, setHurdleRate, onUpdateValuation, onReset,
-  currentValuation, valuationDate, userEmail
+  currentValuation, valuationDate, userEmail, theme, onThemeChange, latestBreakdown
 }) {
   const [rateInput, setRateInput] = useState((hurdleRate * 100).toFixed(2));
   const [valInput, setValInput] = useState("");
@@ -965,40 +1040,28 @@ function SettingsView({
         <button onClick={saveRate} style={primaryButton}>Save Hurdle Rate</button>
       </div>
 
-      <div style={{
-        background: C.card, borderRadius: "16px",
-        padding: "16px", marginBottom: "20px"
-      }}>
-        <div style={{
-          color: C.sub, fontSize: "12px", fontWeight: 600,
-          textTransform: "uppercase", marginBottom: "8px"
-        }}>Update Current Valuation</div>
-
-        <div style={{
-          color: C.faint, fontSize: "12px", marginBottom: "12px"
-        }}>
-          Latest known: {fmtINR(currentValuation)}
-          {valuationDate ? ` as of ${fmtDate(valuationDate)}` : " — no valuation recorded"}
+      <div style={{ background: C.card, borderRadius: "16px", padding: "16px", marginBottom: "20px", border: `1px solid ${C.divider}` }}>
+        <div style={{ color: C.sub, fontSize: "12px", fontWeight: 700, textTransform: "uppercase", marginBottom: "12px" }}>Theme</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+          {[{id:"dark",label:"Dark"},{id:"light",label:"Light"}].map(option => (
+            <button key={option.id} onClick={() => onThemeChange(option.id)} aria-pressed={theme === option.id} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", padding: "13px 10px", borderRadius: "10px", border: `1px solid ${theme === option.id ? C.gold : C.divider}`, background: theme === option.id ? C.cardAlt : "transparent", color: C.text, fontWeight: 700, cursor: "pointer" }}>
+              <span style={{ width: "14px", height: "14px", borderRadius: "50%", border: `3px solid ${theme === option.id ? C.gold : C.sub}`, display: "inline-block" }} />{option.label}
+            </button>
+          ))}
         </div>
-
-        <input
-          type="number" min="0" step="0.01"
-          placeholder="Broker account valuation"
-          value={valInput}
-          onChange={e => setValInput(e.target.value)}
-          style={inputStyle}
-        />
-
-        <input
-          type="date" value={valDate}
-          onChange={e => setValDate(e.target.value)}
-          style={{ ...inputStyle, marginTop: "8px" }}
-        />
-
-        <button onClick={saveValuation} style={primaryButton}>
-          {saved ? "Saved" : "Save Valuation"}
-        </button>
       </div>
+
+      <ValuationForm
+        currentValuation={currentValuation}
+        valuationDate={valuationDate}
+        latestBreakdown={latestBreakdown}
+        onSave={async (valuation, date, breakdown) => {
+          await onUpdateValuation(valuation, date, breakdown);
+          setSaved(true);
+          setTimeout(() => setSaved(false), 1800);
+        }}
+        saved={saved}
+      />
 
       {error && (
         <div style={{ color: C.neg, fontSize: "13px", marginBottom: "12px" }}>
@@ -1018,6 +1081,77 @@ function SettingsView({
         background: "none", borderRadius: "8px", padding: "12px",
         width: "100%", fontWeight: 600, fontSize: "14px"
       }}>Log Out</button>
+    </div>
+  );
+}
+
+function ValuationForm({ currentValuation, valuationDate, latestBreakdown, onSave, saved }) {
+  const [date, setDate] = useState(todayStr());
+  const [items, setItems] = useState(() => {
+    if (Array.isArray(latestBreakdown) && latestBreakdown.length) {
+      const cash = latestBreakdown.find(x => String(x.name).toLowerCase() === "cash");
+      const companies = latestBreakdown.filter(x => String(x.name).toLowerCase() !== "cash");
+      return [{ name: "Cash", amount: cash ? String(cash.amount) : "" }, ...companies.map(x => ({ name: x.name, amount: String(x.amount) }))];
+    }
+    return [{ name: "Cash", amount: "" }, { name: "", amount: "" }];
+  });
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (Array.isArray(latestBreakdown) && latestBreakdown.length) {
+      const cash = latestBreakdown.find(x => String(x.name).toLowerCase() === "cash");
+      const companies = latestBreakdown.filter(x => String(x.name).toLowerCase() !== "cash");
+      setItems([{ name: "Cash", amount: cash ? String(cash.amount) : "" }, ...companies.map(x => ({ name: x.name, amount: String(x.amount) }))]);
+    }
+  }, [JSON.stringify(latestBreakdown || [])]);
+  const total = items.reduce((sum, item) => sum + (item.amount.trim() !== "" && Number.isFinite(Number(item.amount)) && Number(item.amount) >= 0 ? Number(item.amount) : 0), 0);
+  const updateItem = (index, field, value) => setItems(prev => prev.map((item, i) => i === index ? { ...item, [field]: index === 0 && field === "name" ? "Cash" : value } : item));
+  const addItem = () => setItems(prev => [...prev, { name: "", amount: "" }]);
+  const removeItem = index => setItems(prev => prev.filter((_, i) => i !== index));
+  const submit = async () => {
+    if (!isValidDate(date)) { setError("Select a valid valuation date."); return; }
+    if (!items[0] || items[0].amount.trim() === "" || !Number.isFinite(Number(items[0].amount)) || Number(items[0].amount) < 0) { setError("Enter a valid Cash amount."); return; }
+    const normalized = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const name = i === 0 ? "Cash" : item.name.trim();
+      if (i > 0 && !name) { setError(`Enter a company name in item ${i}.`); return; }
+      if (item.amount.trim() === "" || !Number.isFinite(Number(item.amount)) || Number(item.amount) < 0) { setError(`Enter a valid amount for ${name || `item ${i + 1}`}.`); return; }
+      normalized.push({ name, amount: Number(item.amount) });
+    }
+    if (normalized.slice(1).some(x => x.name.toLowerCase() === "cash")) { setError("Cash is reserved for the first row. Enter a company name in the other rows."); return; }
+    setError("");
+    await onSave(normalized.reduce((sum, x) => sum + x.amount, 0), date, normalized);
+  };
+  return (
+    <div style={{ background: C.card, borderRadius: "16px", padding: "16px", marginBottom: "20px", border: `1px solid ${C.divider}` }}>
+      <div style={{ fontFamily: "'Sora',sans-serif", fontSize: "18px", fontWeight: 800, marginBottom: "4px" }}>Add Valuation</div>
+      <div style={{ color: C.sub, fontSize: "12px", marginBottom: "14px" }}>Current saved value: {fmtINR(currentValuation)}{valuationDate ? ` · ${fmtDate(valuationDate)}` : ""}</div>
+      <Label>Date</Label>
+      <input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} />
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(105px, .8fr)", gap: "8px", marginTop: "4px", marginBottom: "8px" }}>
+        <Label>Asset / Company</Label><Label>Amount (₹)</Label>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        {items.map((item, index) => (
+          <div key={index} className="valuation-form-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(105px, .8fr)", gap: "8px", alignItems: "center" }}>
+            {index === 0 ? (
+              <div style={{ ...inputStyle, marginBottom: 0, display: "flex", alignItems: "center", minHeight: "44px", fontWeight: 700 }}>◉ &nbsp; Cash</div>
+            ) : (
+              <div style={{ display: "flex", gap: "5px", minWidth: 0 }}>
+                <input type="text" placeholder="Company name" value={item.name} onChange={e => updateItem(index, "name", e.target.value)} style={{ ...inputStyle, marginBottom: 0, minWidth: 0, flex: 1 }} />
+                <button type="button" aria-label="Remove company" onClick={() => removeItem(index)} style={{ border: `1px solid ${C.divider}`, borderRadius: "8px", background: "transparent", color: C.neg, padding: "0 9px" }}>×</button>
+              </div>
+            )}
+            <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="0.00" value={item.amount} onChange={e => updateItem(index, "amount", e.target.value)} style={{ ...inputStyle, marginBottom: 0, minWidth: 0 }} />
+          </div>
+        ))}
+      </div>
+      <button type="button" onClick={addItem} style={{ background: "transparent", border: `1px dashed ${C.gold}`, color: C.gold, borderRadius: "9px", padding: "10px 14px", marginTop: "12px", fontWeight: 700 }}>＋ Add item</button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", background: C.cardAlt, borderRadius: "10px", padding: "14px", marginTop: "14px" }}>
+        <span style={{ color: C.sub, fontWeight: 600 }}>Total valuation</span><strong style={{ fontFamily: "'Sora',sans-serif", color: C.gold, fontSize: "18px" }}>{fmtINR(total)}</strong>
+      </div>
+      {error && <div style={{ color: C.neg, fontSize: "12px", marginTop: "10px" }}>{error}</div>}
+      <button type="button" onClick={submit} style={{ ...primaryButton, marginTop: "12px" }}>{saved ? "Saved" : "Save Valuation"}</button>
     </div>
   );
 }
